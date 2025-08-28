@@ -38,6 +38,7 @@ import { ChatMessageInput } from "@/components/chat/ChatMessageInput";
 
 export const API_URL = "";
 
+
 type StatusResp = {
   loaded: boolean;
   room?: string | null;
