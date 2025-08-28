@@ -50,7 +50,7 @@ export const PlaygroundHeader = ({
             <GithubSVG />
           </a>
         )}
-        {config.settings.editable && <SettingsDropdown />}
+        {config.settings.editable}
         <Button
           accentColor={
             connectionState === ConnectionState.Connected ? "red" : accentColor

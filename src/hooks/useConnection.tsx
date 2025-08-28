@@ -5,6 +5,7 @@ import React, { createContext, useState } from "react";
 import { useCallback } from "react";
 import { useConfig } from "./useConfig";
 import { useToast } from "@/components/toast/ToasterProvider";
+import { API_URL } from "@/components/playground/Playground";
 
 export type ConnectionMode = "cloud" | "manual" | "env";
 
@@ -87,14 +88,21 @@ export const ConnectionProvider = ({
           );
           body.attributes = attributes;
         }
-        const { accessToken } = await fetch(`/api/token`, {
+        const response = await fetch(API_URL + "/token", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
-        }).then((res) => res.json());
-        token = accessToken;
+        }).then(r => r.json());
+
+        token = response.accessToken;
+        // const { accessToken } = await fetch(`/api/token`, {
+        //   method: "POST",
+        //   headers: {
+        //     "Content-Type": "application/json",
+        //   },
+        //   body: JSON.stringify(body),
+        // }).then((res) => res.json());
+        // token = accessToken;
       } else {
         token = config.settings.token;
         url = config.settings.ws_url;

@@ -16,16 +16,16 @@ const createToken = (
 ) => {
   const at = new AccessToken(apiKey, apiSecret, userInfo);
   at.addGrant(grant);
-  if (agentName) {
-    at.roomConfig = new RoomConfiguration({
-      agents: [
-        new RoomAgentDispatch({
-          agentName: agentName,
-          metadata: '{"user_id": "12345"}',
-        }),
-      ],
-    });
-  }
+  // if (agentName) {
+  //   at.roomConfig = new RoomConfiguration({
+  //     agents: [
+  //       new RoomAgentDispatch({
+  //         agentName: agentName,
+  //         metadata: '{"user_id": "12345"}',
+  //       }),
+  //     ],
+  //   });
+  // }
   return at.toJwt();
 };
 

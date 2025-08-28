@@ -21,7 +21,7 @@ export const ChatMessageInput = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const windowSize = useWindowResize();
   const [isTyping, setIsTyping] = useState(false);
-  const [inputHasFocus, setInputHasFocus] = useState(false);
+  const [inputHasFocus, setInputHasFocus] = useState(true);
 
   const handleSend = useCallback(() => {
     if (!onSend) {

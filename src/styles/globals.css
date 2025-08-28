@@ -51,3 +51,28 @@ body {
     opacity: 1;
   }
 }
+
+.avatar-option {
+  border: 2px solid transparent;
+  padding: 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.2s, background-color 0.2s;
+  background-color: transparent;
+}
+
+.avatar-option:hover {
+  background-color: rgba(127, 61, 255, 0.05); /* light hover */
+}
+
+.avatar-option.selected {
+  border-color: #7f3dff;
+  background-color: rgba(127, 61, 255, 0.15); /* selected bg */
+}
+
+.avatar-img {
+  width: 96px;
+  height: auto;
+  border-radius: 8px;
+}

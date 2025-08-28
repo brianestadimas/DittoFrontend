@@ -2,12 +2,12 @@ import {
   LiveKitRoom,
   RoomAudioRenderer,
   StartAudio,
+  useRoomInfo
 } from "@livekit/components-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Inter } from "next/font/google";
 import Head from "next/head";
 import { useCallback, useState } from "react";
-
 import { PlaygroundConnect } from "@/components/PlaygroundConnect";
 import Playground from "@/components/playground/Playground";
 import { PlaygroundToast, ToastType } from "@/components/toast/PlaygroundToast";

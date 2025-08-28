@@ -27,12 +27,21 @@ import {
   useParticipantAttributes,
 } from "@livekit/components-react";
 import { ConnectionState, LocalParticipant, Track } from "livekit-client";
+import type { TrackReference } from "@livekit/components-react";
 import { QRCodeSVG } from "qrcode.react";
-import { ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useState, useRef } from "react";
 import tailwindTheme from "../../lib/tailwindTheme.preval";
 import { EditableNameValueRow } from "@/components/config/NameValueRow";
 import { AttributesInspector } from "@/components/config/AttributesInspector";
 import { RpcPanel } from "./RpcPanel";
+import { ChatMessageInput } from "@/components/chat/ChatMessageInput";
+
+export const API_URL = "";
+
+type StatusResp = {
+  loaded: boolean;
+  room?: string | null;
+};
 
 export interface PlaygroundMeta {
   name: string;
@@ -66,6 +75,103 @@ export default function Playground({
   const [rpcMethod, setRpcMethod] = useState("");
   const [rpcPayload, setRpcPayload] = useState("");
   const [showRpc, setShowRpc] = useState(false);
+  const [transcribeText, setTranscribeText] = useState("");
+
+  const agentOptions = [
+    {
+      name: "Alice",
+      desc: "Interview Assistant",
+      image: "alice.png",
+      input_image: "static/avatar.png",
+      voice: "af_heart",
+    },
+    {
+      name: "Elenora",
+      desc: "Customer Service",
+      image: "elenora.png",
+      input_image: "static/idle.mp4",
+      voice: "af_sky",
+    },
+    {
+      name: "James",
+      desc: "Coding Assistant",
+      image: "james.png",
+      input_image: "static/james.mp4",
+      voice: "am_adam",
+    },
+  ];
+  const [selectedAgent, setSelectedAgent] = useState(agentOptions[0]);
+
+  const [serverLoaded, setServerLoaded] = useState(false);
+
+  const checkLoaded = useCallback(async () => {
+    try {
+      const r = await fetch(API_URL + "/status");
+      if (!r.ok) return;
+      const s: StatusResp = await r.json();
+      if (s.loaded) {
+        setServerLoaded(true);
+        setHasHeardAudio(true);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (roomState === ConnectionState.Connected && name) {
+      fetch(API_URL + "/offer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room: name,
+          input_image: selectedAgent.input_image,
+          voice: selectedAgent.voice,
+          name: selectedAgent.name,
+          desc: selectedAgent.desc,
+        }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(() => {
+          checkLoaded();
+        });
+    }
+
+    if (roomState === ConnectionState.Disconnected && name) {
+      fetch(API_URL + "/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room: name }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(() => {
+          checkLoaded();
+        });
+    }
+  }, [roomState, name]);
+
+  const sendTranscription = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      if (!(roomState === ConnectionState.Connected)) return;
+
+      await fetch(API_URL + "/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          room: config.settings.room_name || name,
+          text: trimmed,
+          voice: selectedAgent.voice,
+        }),
+      });
+    },
+    [config.settings.room_name, name],
+  );
 
   useEffect(() => {
     if (roomState === ConnectionState.Connected) {
@@ -93,29 +199,36 @@ export default function Playground({
     ({ source }) => source === Track.Source.Microphone,
   );
 
-  const onDataReceived = useCallback(
-    (msg: any) => {
-      if (msg.topic === "transcription") {
-        const decoded = JSON.parse(
-          new TextDecoder("utf-8").decode(msg.payload),
-        );
-        let timestamp = new Date().getTime();
-        if ("timestamp" in decoded && decoded.timestamp > 0) {
-          timestamp = decoded.timestamp;
-        }
-        setTranscripts([
-          ...transcripts,
-          {
-            name: "You",
-            message: decoded.text,
-            timestamp: timestamp,
-            isSelf: true,
-          },
-        ]);
+  const onDataReceived = useCallback((msg: any) => {
+    if (msg.topic === "transcription") {
+      const decoded = JSON.parse(new TextDecoder("utf-8").decode(msg.payload));
+      let timestamp = new Date().getTime();
+      if ("timestamp" in decoded && decoded.timestamp > 0) {
+        timestamp = decoded.timestamp;
       }
-    },
-    [transcripts],
-  );
+      setTranscripts((prev) => [
+        ...prev,
+        { name: "You", message: decoded.text, timestamp, isSelf: true },
+      ]);
+    } else if (msg.topic === "agent_audio_ready") {
+      setHasHeardAudio(true);
+      setServerLoaded(true);
+    }
+  }, []);
+
+  const [hasHeardAudio, setHasHeardAudio] = useState(false);
+  const videoWrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (roomState !== ConnectionState.Connected) {
+      setHasHeardAudio(false);
+      checkLoaded();
+    }
+  }, [roomState]);
+
+  useEffect(() => {
+    checkLoaded();
+  }, [checkLoaded]);
 
   useDataChannel(onDataReceived);
 
@@ -130,16 +243,26 @@ export default function Playground({
 
     const loadingContent = (
       <div className="flex flex-col items-center justify-center gap-2 text-gray-700 text-center h-full w-full">
-        <LoadingSVG />
+        <img src="/loading.gif" alt="Loading..." />
         Waiting for agent video track…
       </div>
     );
 
     const videoContent = (
-      <VideoTrack
-        trackRef={agentVideoTrack}
-        className={`absolute top-1/2 -translate-y-1/2 ${videoFitClassName} object-position-center w-full h-full`}
-      />
+      <div ref={videoWrapRef} className="absolute inset-0 w-full h-full">
+        {agentVideoTrack && (
+          <VideoTrack
+            trackRef={agentVideoTrack}
+            className={`absolute inset-0 ${videoFitClassName} object-position-center w-full h-full`}
+          />
+        )}
+        {!(hasHeardAudio || serverLoaded) && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-gray-700 text-center bg-black">
+            <img src="/loading.gif" alt="Loading..." />
+            Waiting for agent voice…
+          </div>
+        )}
+      </div>
     );
 
     let content = null;
@@ -156,7 +279,7 @@ export default function Playground({
         {content}
       </div>
     );
-  }, [agentVideoTrack, config, roomState]);
+  }, [agentVideoTrack, config, roomState, hasHeardAudio, serverLoaded]);
 
   useEffect(() => {
     document.body.style.setProperty(
@@ -249,11 +372,14 @@ export default function Playground({
   const settingsTileContent = useMemo(() => {
     return (
       <div className="flex flex-col h-full w-full items-start overflow-y-auto">
-        {config.description && (
-          <ConfigurationPanelItem title="Description">
-            {config.description}
-          </ConfigurationPanelItem>
-        )}
+        <ConfigurationPanelItem title="Transcribe">
+          <ChatMessageInput
+            placeholder="Type text…"
+            accentColor={config.settings.theme_color}
+            height={56}
+            onSend={sendTranscription}
+          />
+        </ConfigurationPanelItem>
 
         <ConfigurationPanelItem title="Room">
           <div className="flex flex-col gap-2">
@@ -292,144 +418,24 @@ export default function Playground({
         </ConfigurationPanelItem>
 
         <ConfigurationPanelItem title="Agent">
-          <div className="flex flex-col gap-2">
-            <EditableNameValueRow
-              name="Agent name"
-              value={
-                roomState === ConnectionState.Connected
-                  ? config.settings.agent_name || "None"
-                  : config.settings.agent_name || ""
-              }
-              valueColor={`${config.settings.theme_color}-500`}
-              onValueChange={(value) => {
-                const newSettings = { ...config.settings };
-                newSettings.agent_name = value;
-                setUserSettings(newSettings);
-              }}
-              placeholder="None"
-              editable={roomState !== ConnectionState.Connected}
-            />
-            <NameValueRow
-              name="Identity"
-              value={
-                voiceAssistant.agent ? (
-                  voiceAssistant.agent.identity
-                ) : roomState === ConnectionState.Connected ? (
-                  <LoadingSVG diameter={12} strokeWidth={2} />
-                ) : (
-                  "No agent connected"
-                )
-              }
-              valueColor={
-                voiceAssistant.agent
-                  ? `${config.settings.theme_color}-500`
-                  : "gray-500"
-              }
-            />
-            {roomState === ConnectionState.Connected &&
-              voiceAssistant.agent && (
-                <AttributesInspector
-                  attributes={Object.entries(
-                    agentAttributes.attributes || {},
-                  ).map(([key, value], index) => ({
-                    id: `agent-attr-${index}`,
-                    key,
-                    value: String(value),
-                  }))}
-                  onAttributesChange={() => {}}
-                  themeColor={config.settings.theme_color}
-                  disabled={true}
-                />
-              )}
-            <p className="text-xs text-gray-500 text-right">
-              Set an agent name to use{" "}
-              <a
-                href="https://docs.livekit.io/agents/worker/dispatch#explicit"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-gray-500 hover:text-gray-300 underline"
+          <div className="flex flex-row flex-wrap gap-3 pt-2 justify-start">
+            {agentOptions.map((agent, i) => (
+              <div
+                key={i}
+                className={`avatar-option ${
+                  selectedAgent.name === agent.name ? "selected" : ""
+                }`}
+                onClick={() => setSelectedAgent(agent)}
               >
-                explicit dispatch
-              </a>
-              .
-            </p>
+                <img src={agent.image} className="avatar-img" />
+                <strong>{agent.name}</strong>
+                <br />
+                <small>{agent.desc}</small>
+              </div>
+            ))}
           </div>
         </ConfigurationPanelItem>
 
-        <ConfigurationPanelItem title="User">
-          <div className="flex flex-col gap-2">
-            <EditableNameValueRow
-              name="Name"
-              value={
-                roomState === ConnectionState.Connected
-                  ? localParticipant?.name || ""
-                  : config.settings.participant_name || ""
-              }
-              valueColor={`${config.settings.theme_color}-500`}
-              onValueChange={(value) => {
-                const newSettings = { ...config.settings };
-                newSettings.participant_name = value;
-                setUserSettings(newSettings);
-              }}
-              placeholder="Auto"
-              editable={roomState !== ConnectionState.Connected}
-            />
-            <EditableNameValueRow
-              name="Identity"
-              value={
-                roomState === ConnectionState.Connected
-                  ? localParticipant?.identity || ""
-                  : config.settings.participant_id || ""
-              }
-              valueColor={`${config.settings.theme_color}-500`}
-              onValueChange={(value) => {
-                const newSettings = { ...config.settings };
-                newSettings.participant_id = value;
-                setUserSettings(newSettings);
-              }}
-              placeholder="Auto"
-              editable={roomState !== ConnectionState.Connected}
-            />
-            <AttributesInspector
-              attributes={config.settings.attributes || []}
-              onAttributesChange={(newAttributes) => {
-                const newSettings = { ...config.settings };
-                newSettings.attributes = newAttributes;
-                setUserSettings(newSettings);
-              }}
-              metadata={config.settings.metadata}
-              onMetadataChange={(metadata) => {
-                const newSettings = { ...config.settings };
-                newSettings.metadata = metadata;
-                setUserSettings(newSettings);
-              }}
-              themeColor={config.settings.theme_color}
-              disabled={false}
-              connectionState={roomState}
-            />
-          </div>
-        </ConfigurationPanelItem>
-
-        {roomState === ConnectionState.Connected &&
-          config.settings.inputs.screen && (
-            <ConfigurationPanelItem
-              title="Screen"
-              source={Track.Source.ScreenShare}
-            >
-              {localScreenTrack ? (
-                <div className="relative">
-                  <VideoTrack
-                    className="rounded-sm border border-gray-800 opacity-70 w-full"
-                    trackRef={localScreenTrack}
-                  />
-                </div>
-              ) : (
-                <div className="flex items-center justify-center text-gray-700 text-center w-full h-full">
-                  Press the button above to share your screen.
-                </div>
-              )}
-            </ConfigurationPanelItem>
-          )}
         {roomState === ConnectionState.Connected && voiceAssistant.agent && (
           <RpcPanel
             config={config}
@@ -458,19 +464,6 @@ export default function Playground({
             <AudioInputTile trackRef={localMicTrack} />
           </ConfigurationPanelItem>
         )}
-        <div className="w-full">
-          <ConfigurationPanelItem title="Color">
-            <ColorPicker
-              colors={themeColors}
-              selectedColor={config.settings.theme_color}
-              onSelect={(color) => {
-                const userSettings = { ...config.settings };
-                userSettings.theme_color = color;
-                setUserSettings(userSettings);
-              }}
-            />
-          </ConfigurationPanelItem>
-        </div>
         {config.show_qr && (
           <div className="w-full">
             <ConfigurationPanelItem title="QR Code">
@@ -498,6 +491,7 @@ export default function Playground({
     handleRpcCall,
     showRpc,
     setShowRpc,
+    selectedAgent
   ]);
 
   let mobileTabs: PlaygroundTab[] = [];
@@ -526,13 +520,6 @@ export default function Playground({
           {audioTileContent}
         </PlaygroundTile>
       ),
-    });
-  }
-
-  if (config.settings.chat) {
-    mobileTabs.push({
-      title: "Chat",
-      content: chatTileContent,
     });
   }
 
@@ -590,25 +577,8 @@ export default function Playground({
               {videoTileContent}
             </PlaygroundTile>
           )}
-          {config.settings.outputs.audio && (
-            <PlaygroundTile
-              title="Agent Audio"
-              className="w-full h-full grow"
-              childrenClassName="justify-center"
-            >
-              {audioTileContent}
-            </PlaygroundTile>
-          )}
         </div>
 
-        {config.settings.chat && (
-          <PlaygroundTile
-            title="Chat"
-            className="h-full grow basis-1/4 hidden lg:flex"
-          >
-            {chatTileContent}
-          </PlaygroundTile>
-        )}
         <PlaygroundTile
           padding={false}
           backgroundColor="gray-950"
