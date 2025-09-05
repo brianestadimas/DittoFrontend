@@ -35,6 +35,7 @@ import { EditableNameValueRow } from "@/components/config/NameValueRow";
 import { AttributesInspector } from "@/components/config/AttributesInspector";
 import { RpcPanel } from "./RpcPanel";
 import { ChatMessageInput } from "@/components/chat/ChatMessageInput";
+import { RoomEvent } from "livekit-client";
 
 export const API_URL = "";
 
@@ -116,6 +117,7 @@ export default function Playground({
       }
     } catch {}
   }, []);
+  
 
   useEffect(() => {
     if (roomState === ConnectionState.Connected && name) {
@@ -336,6 +338,100 @@ export default function Playground({
     roomState,
     voiceAssistant.state,
   ]);
+  
+    // put near other refs/state
+  const firstReadyBySound = useRef(false);
+  // re-arm first-hear-sound ONLY when the room actually disconnects
+  useEffect(() => {
+    if (!room) return;
+
+    const onRoomDisconnected = () => {
+      // re-arm the audio gate for the next connection
+      firstReadyBySound.current = false;
+      setHasHeardAudio(false);
+      setServerLoaded(false);
+    };
+
+    room.on(RoomEvent.Disconnected, onRoomDisconnected);
+    return () => {
+      room.off(RoomEvent.Disconnected, onRoomDisconnected);
+    };
+  }, [room, setHasHeardAudio, setServerLoaded]);
+
+
+  // FIRST LOAD: unlock UI only when we detect real audio energy
+  useEffect(() => {
+    // only run once, and only if we haven't already been marked ready
+    if (firstReadyBySound.current) return;
+    if (hasHeardAudio || serverLoaded) return;
+
+    // get underlying LK RemoteAudioTrack (from VoiceAssistant)
+    // NOTE: we don't rely on video at all here
+    const lkTrack: any = voiceAssistant.audioTrack?.publication?.track;
+    if (!lkTrack) return;
+
+    let audioEl: HTMLAudioElement | null = null;
+    let ctx: AudioContext | null = null;
+    let src: MediaStreamAudioSourceNode | null = null;
+    let analyser: AnalyserNode | null = null;
+    let raf = 0;
+    let stop = false;
+
+    const cleanup = () => {
+      stop = true;
+      if (raf) cancelAnimationFrame(raf);
+      try { analyser?.disconnect(); } catch {}
+      try { src?.disconnect(); } catch {}
+      try { ctx?.close(); } catch {}
+      try { audioEl && lkTrack?.detach?.(audioEl); } catch {}
+      audioEl = null; ctx = null; src = null; analyser = null;
+    };
+
+    try {
+      // attach a hidden, muted <audio> so autoplay policies are happy
+      audioEl = lkTrack.attach() as HTMLAudioElement;
+      audioEl.muted = true;
+      // don't await: some browsers return a Promise that rejects during race
+      audioEl.play().catch(() => {});
+
+      const stream = (audioEl as any).srcObject as MediaStream | null;
+      if (!stream) return cleanup;
+
+      // Analyser for real audio energy
+      ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // resume just in case
+      ctx.resume?.().catch(() => {});
+      src = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+
+      const buf = new Float32Array(analyser.fftSize);
+      const tick = () => {
+        if (stop || !analyser) return;
+        analyser.getFloatTimeDomainData(buf);
+        let e = 0;
+        for (let i = 0; i < buf.length; i++) e += buf[i] * buf[i];
+        e /= buf.length;
+
+        // tiny, stable threshold to confirm sound is actually flowing
+        if (e > 1e-5) {
+          firstReadyBySound.current = true;
+          setHasHeardAudio(true);
+          setServerLoaded(true);
+          cleanup();
+          return;
+        }
+        raf = requestAnimationFrame(tick);
+      };
+      raf = requestAnimationFrame(tick);
+    } catch {
+      cleanup();
+    }
+
+    return cleanup;
+  }, [voiceAssistant.audioTrack, hasHeardAudio, serverLoaded, setHasHeardAudio, setServerLoaded]);
+
 
   const chatTileContent = useMemo(() => {
     if (voiceAssistant.agent) {
